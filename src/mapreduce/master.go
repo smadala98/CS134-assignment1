@@ -28,7 +28,7 @@ func (mr *MapReduce) KillWorkers() *list.List {
 	return l
 }
 
-func RunParallelJob(worker string, operation JobType, jobNum int, numOtherPhase int, c chan string) {
+func RunParallelJob(worker string, operation JobType, jobNum int, numOtherPhase int, c chan string, mr *MapReduce) {
 	args := &DoJobArgs{}
 	args.Operation = operation
 	args.JobNumber = jobNum
@@ -37,11 +37,14 @@ func RunParallelJob(worker string, operation JobType, jobNum int, numOtherPhase 
 	reply := &DoJobReply{}
 	//fmt.Printf("Worker %v performing %v %v\n", worker, args.Operation, args.JobNumber)
 	if !call(worker, "Worker.DoJob", args, &reply) {
+		//fmt.Printf("Worker %v failed", worker)
+		delete(mr.Workers, worker)
 		worker = <-c
-		go RunParallelJob(worker, operation, jobNum, numOtherPhase, c)
+		go RunParallelJob(worker, operation, jobNum, numOtherPhase, c, mr)
+	} else {
+		//fmt.Printf("Worker %v completed %v %v\n", worker, args.Operation, args.JobNumber)
+		c <- worker
 	}
-	//fmt.Printf("Worker %v completed %v %v\n", worker, args.Operation, args.JobNumber)
-	c <- worker
 }
 
 func (mr *MapReduce) RunMaster() *list.List {
@@ -60,10 +63,10 @@ func (mr *MapReduce) RunMaster() *list.List {
 		select {
 		case worker := <-mr.registerChannel:
 			mr.Workers[worker] = &WorkerInfo{worker}
-			go RunParallelJob(worker, "Map", mapWorkerCount, mr.nReduce, workerChannel)
+			go RunParallelJob(worker, "Map", mapWorkerCount, mr.nReduce, workerChannel, mr)
 			mapWorkerCount++
 		case oldWorker := <-workerChannel:
-			go RunParallelJob(oldWorker, "Map", mapWorkerCount, mr.nReduce, workerChannel)
+			go RunParallelJob(oldWorker, "Map", mapWorkerCount, mr.nReduce, workerChannel, mr)
 			mapWorkerCount++
 			//default:
 			//fmt.Println("No workers available for map")
@@ -78,7 +81,7 @@ func (mr *MapReduce) RunMaster() *list.List {
 
 	workerIndex := 0
 	for worker := range mr.Workers {
-		go RunParallelJob(worker, "Reduce", workerIndex, mr.nMap, workerChannel)
+		go RunParallelJob(worker, "Reduce", workerIndex, mr.nMap, workerChannel, mr)
 		workerIndex++
 	}
 
@@ -90,10 +93,10 @@ func (mr *MapReduce) RunMaster() *list.List {
 		select {
 		case worker := <-mr.registerChannel:
 			mr.Workers[worker] = &WorkerInfo{worker}
-			go RunParallelJob(worker, "Reduce", reduceWorkerCount, mr.nMap, workerChannel)
+			go RunParallelJob(worker, "Reduce", reduceWorkerCount, mr.nMap, workerChannel, mr)
 			reduceWorkerCount++
 		case oldWorker := <-workerChannel:
-			go RunParallelJob(oldWorker, "Reduce", reduceWorkerCount, mr.nMap, workerChannel)
+			go RunParallelJob(oldWorker, "Reduce", reduceWorkerCount, mr.nMap, workerChannel, mr)
 			reduceWorkerCount++
 			//default:
 			//fmt.Println("No workers available for reduce")
